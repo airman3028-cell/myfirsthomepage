@@ -1,0 +1,761 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#F4F1EA">
+<title>한국전력 통합 PDF 병합 시스템</title>
+
+<!-- 글꼴: Noto Sans KR (구글 폰트 CDN) -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&display=swap" rel="stylesheet">
+<!-- FontAwesome 아이콘 CDN (cdnjs) -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+<!-- pdf-lib 라이브러리 CDN (PDF 병합용, jsdelivr) -->
+<script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+<!-- PDF.js CDN (페이지 수 파악 및 썸네일 생성용, cdnjs) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<!-- SortableJS CDN (드래그 앤 드롭 목록 순서 변경용, jsdelivr) -->
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
+<script>
+  // PDF.js 작업자(worker) 파일 위치 설정
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+</script>
+
+<style>
+  /* ===== 색상·글꼴 토큰 (공통 조건: 오트밀 배경 + 남색 포인트) ===== */
+  :root {
+    --bg: #F4F1EA;          /* 배경: 눈이 편한 오트밀 아이보리 */
+    --surface: #FCFAF5;     /* 카드 바탕: 크림색 */
+    --soft: #EFEBE2;        /* 입력칸·칩 바탕 */
+    --ink: #2B2F38;         /* 본문 글자: 짙은 회색 */
+    --muted: #7A7468;       /* 보조 글자: 회갈색 */
+    --line: #E2DCCF;        /* 테두리: 베이지 */
+    --navy: #1f3a6d;        /* 포인트 색 (남색) */
+    --navy-dark: #172D55;
+    --navy-soft: #E3E6EC;   /* 남색 연한 배경 */
+    --warn: #B5523F;        /* 경고·삭제: 테라코타 */
+    --warn-soft: #F3E1DA;
+    --ok: #7FA38A;          /* 완료 표시: 세이지 */
+    --shadow: rgba(70, 58, 38, .07);   /* 그림자: 옅은 갈색 */
+    --font: "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+    color-scheme: light;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+  html { font-size: 16px; }
+  body {
+    margin: 0; min-height: 100vh;
+    background: var(--bg); color: var(--ink);
+    font-family: var(--font); line-height: 1.55;
+    display: flex; flex-direction: column;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  :focus-visible { outline: 3px solid rgba(31, 58, 109, .35); outline-offset: 2px; }
+  .hidden { display: none !important; }
+  .wrap { max-width: 1100px; width: 100%; margin: 0 auto; padding: 0 24px; }
+
+  /* ===== 맨 위 돌아가기 링크 ===== */
+  .back-bar { padding-top: calc(14px + env(safe-area-inset-top, 0px)); }
+  .back-link {
+    display: inline-flex; align-items: center; gap: 4px;
+    color: var(--navy); font-weight: 700; font-size: .92rem; text-decoration: none;
+    padding: 6px 12px; border-radius: 999px; background: var(--navy-soft);
+  }
+  .back-link:hover { background: #D7DCE5; }
+
+  /* ===== 상단 헤더 ===== */
+  .top { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 16px 0 18px; }
+  .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+  .brand-mark {
+    width: 46px; height: 46px; flex: none; border-radius: 14px;
+    background: var(--navy); color: var(--surface);
+    display: grid; place-items: center; font-size: 1.3rem;
+  }
+  .brand h1 { margin: 0; font-size: 1.45rem; font-weight: 900; color: var(--navy); letter-spacing: -0.02em; line-height: 1.25; }
+  .brand p { margin: 2px 0 0; font-size: .82rem; color: var(--muted); }
+  .secure-tag {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 999px;
+    padding: 6px 14px; font-size: .8rem; font-weight: 700; color: var(--navy);
+  }
+  .secure-tag i { color: var(--ok); }
+
+  main { flex: 1; padding-bottom: 24px; }
+
+  /* ===== 둥근 카드 공통 ===== */
+  .card {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 20px;
+    box-shadow: 0 4px 20px var(--shadow);
+  }
+
+  /* ===== 보안 안내 배너 ===== */
+  .notice {
+    display: flex; gap: 12px; align-items: flex-start;
+    padding: 14px 18px; margin-bottom: 18px; border-left: 5px solid var(--navy);
+    font-size: .9rem; color: var(--ink);
+  }
+  .notice i { color: var(--navy); font-size: 1.1rem; margin-top: 3px; }
+  .notice strong { color: var(--navy); }
+
+  /* ===== 파일 끌어다 놓는 곳 ===== */
+  .drop {
+    border: 2px dashed #D3CBBB; border-radius: 22px; background: var(--surface);
+    padding: 40px 20px; text-align: center; cursor: pointer;
+    transition: border-color .15s, background-color .15s;
+  }
+  .drop:hover { border-color: var(--navy); }
+  .drop.drag-over { border-color: var(--navy); background: var(--navy-soft); }
+  .drop-icon {
+    width: 68px; height: 68px; margin: 0 auto 12px; border-radius: 50%;
+    background: var(--navy-soft); color: var(--navy);
+    display: grid; place-items: center; font-size: 1.7rem; transition: transform .2s;
+  }
+  .drop:hover .drop-icon { transform: scale(1.08); }
+  .drop h2 { margin: 0 0 4px; font-size: 1.15rem; color: var(--navy); }
+  .drop p { margin: 0; font-size: .9rem; color: var(--muted); }
+  .drop .link { color: var(--navy); font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
+  .chips { display: flex; justify-content: center; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+  .chip { background: var(--soft); color: var(--muted); font-size: .78rem; font-weight: 500; padding: 3px 10px; border-radius: 8px; }
+
+  /* ===== 버튼 ===== */
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    font-weight: 700; font-size: .9rem; line-height: 1.2;
+    padding: .55em 1em; border-radius: 12px;
+    border: 1.5px solid var(--line); background: var(--surface); color: var(--navy);
+    transition: background-color .15s, border-color .15s, transform .08s;
+  }
+  .btn:hover { background: var(--navy-soft); border-color: #CFC8B8; }
+  .btn:active { transform: translateY(1px); }
+  .btn.danger { color: var(--warn); }
+  .btn.danger:hover { background: var(--warn-soft); border-color: #E5C3B6; }
+  .btn.primary {
+    background: var(--navy); border-color: var(--navy); color: #fff;
+    font-size: 1.05rem; padding: .85em 1.8em; border-radius: 16px;
+    box-shadow: 0 6px 14px rgba(31, 58, 109, .16);
+  }
+  .btn.primary:hover { background: var(--navy-dark); border-color: var(--navy-dark); }
+
+  /* ===== 파일 목록 ===== */
+  .list-section { margin-top: 28px; }
+  .list-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+    padding-bottom: 12px; margin-bottom: 12px; border-bottom: 1px solid var(--line);
+  }
+  .list-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .list-title h3 { margin: 0; font-size: 1.1rem; color: var(--navy); }
+  .badge { font-size: .78rem; font-weight: 700; padding: 2px 10px; border-radius: 999px; }
+  .badge.navy { background: var(--navy-soft); color: var(--navy); }
+  .badge.plain { background: var(--soft); color: var(--muted); }
+  .list-btns { display: flex; gap: 8px; }
+  .sort-hint { font-size: .82rem; color: var(--muted); margin: 0 0 10px 4px; display: flex; align-items: center; gap: 6px; }
+
+  #pdfList { display: flex; flex-direction: column; gap: 10px; }
+  .item {
+    display: flex; align-items: center; gap: 12px;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 16px;
+    padding: 12px 14px; box-shadow: 0 2px 10px var(--shadow);
+    transition: box-shadow .15s;
+  }
+  .item:hover { box-shadow: 0 6px 18px rgba(70, 58, 38, .1); }
+  .drag-handle { color: #C8BFAE; padding: 6px 2px; cursor: grab; font-size: 1.1rem; }
+  .item:hover .drag-handle { color: var(--muted); }
+  .drag-handle:active { cursor: grabbing; }
+  .order { width: 22px; text-align: center; font-size: .8rem; font-weight: 700; color: var(--muted); flex: none; }
+  .thumb {
+    width: 46px; height: 62px; flex: none; object-fit: cover;
+    border: 1px solid var(--line); border-radius: 6px; background: var(--soft);
+  }
+  .thumb.none { display: grid; place-items: center; color: var(--warn); font-size: 1.2rem; background: var(--warn-soft); border-color: #E9CFC5; }
+  .info { flex: 1; min-width: 0; }
+  .info h4 { margin: 0; font-size: .95rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .meta { display: flex; align-items: center; gap: 10px; margin-top: 4px; font-size: .8rem; color: var(--muted); }
+  .pages { background: var(--navy-soft); color: var(--navy); font-weight: 700; padding: 1px 8px; border-radius: 6px; }
+  .move { display: flex; gap: 4px; }
+  .icon-btn {
+    width: 34px; height: 34px; border-radius: 10px; border: 0; background: transparent;
+    color: var(--muted); display: grid; place-items: center; transition: background-color .15s, color .15s;
+  }
+  .icon-btn:hover:not(:disabled) { background: var(--navy-soft); color: var(--navy); }
+  .icon-btn:disabled { opacity: .3; cursor: not-allowed; }
+  .icon-btn.del:hover { background: var(--warn-soft); color: var(--warn); }
+
+  /* 끌어서 옮길 때 모양 (SortableJS) */
+  .sortable-ghost { opacity: .4; background: var(--soft); }
+  .sortable-drag { cursor: grabbing; }
+
+  /* ===== 병합 실행 영역 ===== */
+  .action-section { margin-top: 24px; }
+  .action {
+    display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+    padding: 18px 22px;
+  }
+  .action .label { margin: 0; font-size: .85rem; font-weight: 700; color: var(--ink); }
+  .action .fname { margin: 2px 0 0; color: var(--navy); font-weight: 700; font-family: ui-monospace, "Consolas", monospace; word-break: break-all; }
+
+  /* ===== 맨 아래 ===== */
+  .foot { border-top: 1px solid var(--line); padding: 16px 0 20px; text-align: center; }
+  .foot .copy { margin: 0 0 4px; font-size: .78rem; color: var(--muted); }
+  .foot .note { margin: 0; font-size: .75rem; color: var(--muted); }
+
+  /* ===== 처리 중 창 ===== */
+  .modal {
+    position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center;
+    background: rgba(45, 40, 30, .45); backdrop-filter: blur(3px); padding: 16px;
+  }
+  .modal-card { width: 100%; max-width: 360px; padding: 30px 26px; text-align: center; border-top: 6px solid var(--navy); }
+  .spinner { position: relative; width: 64px; height: 64px; margin: 0 auto 16px; display: grid; place-items: center; color: var(--navy); font-size: 1.3rem; }
+  .spinner::before, .spinner::after { content: ""; position: absolute; inset: 0; border-radius: 50%; border: 4px solid var(--navy-soft); }
+  .spinner::after { border-color: var(--navy) transparent var(--navy) var(--navy); animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .modal-card h3 { margin: 0; font-size: 1.1rem; color: var(--navy); }
+  .modal-card p { margin: 4px 0 0; font-size: .82rem; color: var(--muted); }
+  .bar { height: 8px; border-radius: 999px; background: var(--soft); overflow: hidden; margin-top: 18px; }
+  .bar > div { height: 100%; width: 0; background: var(--navy); border-radius: 999px; transition: width .2s; }
+  .percent { margin-top: 8px; font-size: .82rem; font-weight: 700; color: var(--navy); font-family: ui-monospace, "Consolas", monospace; }
+
+  /* ===== 알림 (토스트) ===== */
+  .toast {
+    position: fixed; right: 24px; bottom: calc(24px + env(safe-area-inset-bottom, 0px)); z-index: 60;
+    display: flex; align-items: center; gap: 10px; max-width: min(90vw, 460px);
+    background: var(--navy); color: #fff; padding: 12px 18px; border-radius: 14px;
+    box-shadow: 0 10px 28px rgba(45, 40, 30, .22); font-size: .9rem; font-weight: 500;
+    opacity: 0; transform: translateY(20px); pointer-events: none; transition: opacity .25s, transform .25s;
+  }
+  .toast.show { opacity: 1; transform: none; }
+  .toast i { font-size: 1.1rem; }
+  .toast i.success { color: #A8D1B3; }
+  .toast i.error { color: #F0B4A2; }
+  .toast i.info { color: #BFD0EC; }
+
+  /* ===== 휴대폰 화면 ===== */
+  @media (max-width: 640px) {
+    .wrap { padding: 0 14px; }
+    .brand h1 { font-size: 1.2rem; }
+    .brand p { display: none; }
+    .drop { padding: 30px 16px; }
+    .item { gap: 8px; padding: 10px; }
+    .order { display: none; }
+    .thumb { width: 40px; height: 54px; }
+    .move { flex-direction: column; gap: 2px; }
+    .icon-btn { width: 32px; height: 30px; }
+    .action { padding: 16px; }
+    .action .btn.primary { width: 100%; }
+    .toast { left: 14px; right: 14px; max-width: none; }
+  }
+</style>
+</head>
+<body>
+
+  <!-- 화면 맨 위 왼쪽: 업무 도구 모음으로 돌아가기 -->
+  <nav class="wrap back-bar">
+    <a class="back-link" href="index.html">← 업무 도구 모음</a>
+  </nav>
+
+  <!-- 상단 헤더 -->
+  <header class="wrap top">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true"><i class="fa-solid fa-file-pdf"></i></div>
+      <div>
+        <h1>스마트 PDF 병합 시스템</h1>
+        <p>한국전력공사 사무용 문서 통합 솔루션</p>
+      </div>
+    </div>
+    <!-- 보안 안내 태그 -->
+    <div class="secure-tag">
+      <i class="fa-solid fa-shield-halved"></i>
+      <span>100% 로컬 보안 처리 (서버 전송 없음)</span>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <!-- 보안 안내 배너 -->
+    <div class="card notice">
+      <i class="fa-solid fa-circle-info"></i>
+      <div>
+        <strong>안전한 문서 처리:</strong>
+        본 시스템에 추가된 파일은 외부에 업로드되지 않으며, 사내 업무 PC의 웹 브라우저 내에서 직접 병합됩니다. 개인정보 및 문서 보안 규정을 안전하게 준수합니다.
+      </div>
+    </div>
+
+    <!-- 파일 업로드 드롭존 -->
+    <section id="dropZone" class="drop" role="button" tabindex="0" aria-label="PDF 파일 추가">
+      <input type="file" id="fileInput" multiple accept="application/pdf" class="hidden">
+      <div class="drop-icon"><i class="fa-solid fa-cloud-arrow-up"></i></div>
+      <h2>PDF 파일을 이 곳에 끌어다 놓으세요</h2>
+      <p>또는 <span class="link">내 컴퓨터에서 파일 찾기</span> 버튼을 누르세요</p>
+      <div class="chips">
+        <span class="chip">다중 선택 가능</span>
+        <span class="chip">.pdf 전용</span>
+      </div>
+    </section>
+
+    <!-- 파일 목록 및 컨트롤 -->
+    <section id="listSection" class="list-section hidden">
+      <div class="list-head">
+        <div class="list-title">
+          <h3>병합할 PDF 목록</h3>
+          <span id="fileCountBadge" class="badge navy">0개 파일</span>
+          <span id="totalPageBadge" class="badge plain">총 0페이지</span>
+        </div>
+        <div class="list-btns">
+          <button id="addMoreBtn" class="btn"><i class="fa-solid fa-plus"></i><span>파일 추가</span></button>
+          <button id="clearAllBtn" class="btn danger"><i class="fa-solid fa-trash-can"></i><span>목록 비우기</span></button>
+        </div>
+      </div>
+
+      <!-- 순서 변경 안내 -->
+      <p class="sort-hint">
+        <i class="fa-solid fa-arrows-up-down"></i>
+        <span>항목을 위아래로 끌어다 놓아 순서를 변경할 수 있습니다.</span>
+      </p>
+
+      <!-- PDF 파일 카드 목록 (SortableJS 적용) -->
+      <div id="pdfList"></div>
+    </section>
+
+    <!-- 병합 실행 영역 -->
+    <section id="actionSection" class="action-section hidden">
+      <div class="card action">
+        <div>
+          <p class="label">다운로드 파일명 예정:</p>
+          <p id="previewFilename" class="fname">병합_20261006.pdf</p>
+        </div>
+        <button id="mergeBtn" class="btn primary">
+          <i class="fa-solid fa-object-group"></i>
+          <span>하나의 PDF로 병합하기</span>
+        </button>
+      </div>
+    </section>
+  </main>
+
+  <!-- 하단: 저작권 + 공통 안내 문구 -->
+  <footer class="wrap foot">
+    <p class="copy">© 한국전력공사 KEPCO. 스마트 업무지원 웹 애플리케이션.</p>
+    <p class="note">입력한 내용은 이 브라우저 안에서만 처리되며 어디에도 저장·전송되지 않습니다.</p>
+  </footer>
+
+  <!-- 처리 중 창 -->
+  <div id="loadingModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modalStatusTitle">
+    <div class="card modal-card">
+      <div class="spinner"><i class="fa-solid fa-file-pdf"></i></div>
+      <h3 id="modalStatusTitle">PDF 병합 처리 중...</h3>
+      <p id="modalStatusDesc">문서를 순서대로 결합하고 있습니다. 잠시만 기다려주세요.</p>
+      <div class="bar"><div id="progressBar"></div></div>
+      <p id="progressPercent" class="percent">0%</p>
+    </div>
+  </div>
+
+  <!-- 알림 메시지 (alert() 대신 사용) -->
+  <div id="toast" class="toast" role="status" aria-live="polite">
+    <i id="toastIcon" class="fa-solid fa-circle-check success"></i>
+    <span id="toastMsg">메시지 내용</span>
+  </div>
+
+<script>
+  // ==========================================
+  // 상태 관리: 추가된 PDF 목록 (브라우저 메모리에만 보관)
+  // ==========================================
+  /** @type {Array<{id: string, file: File, pageCount: number, thumbnail: string|null, size: string}>} */
+  let pdfFileList = [];
+
+  // HTML 요소 참조
+  const dropZone = document.getElementById('dropZone');
+  const fileInput = document.getElementById('fileInput');
+  const listSection = document.getElementById('listSection');
+  const actionSection = document.getElementById('actionSection');
+  const pdfListContainer = document.getElementById('pdfList');
+  const fileCountBadge = document.getElementById('fileCountBadge');
+  const totalPageBadge = document.getElementById('totalPageBadge');
+  const previewFilename = document.getElementById('previewFilename');
+  const mergeBtn = document.getElementById('mergeBtn');
+  const addMoreBtn = document.getElementById('addMoreBtn');
+  const clearAllBtn = document.getElementById('clearAllBtn');
+  const loadingModal = document.getElementById('loadingModal');
+  const progressBar = document.getElementById('progressBar');
+  const progressPercent = document.getElementById('progressPercent');
+
+  // ==========================================
+  // 시작할 때 이벤트 연결
+  // ==========================================
+  window.addEventListener('DOMContentLoaded', () => {
+    initSortable();
+    setupDragAndDrop();
+    updateFilenamePreview();
+  });
+
+  // SortableJS: 손잡이를 끌어 목록 순서 바꾸기
+  function initSortable() {
+    new Sortable(pdfListContainer, {
+      animation: 150,
+      handle: '.drag-handle',
+      ghostClass: 'sortable-ghost',
+      onEnd: function () {
+        // 화면 순서에 맞게 pdfFileList 다시 정렬
+        const newOrderIds = Array.from(pdfListContainer.children).map(el => el.dataset.id);
+        pdfFileList.sort((a, b) => newOrderIds.indexOf(a.id) - newOrderIds.indexOf(b.id));
+      }
+    });
+  }
+
+  // 드롭존과 버튼 이벤트 설정
+  function setupDragAndDrop() {
+    // 누르면 파일 선택 창 열기
+    dropZone.addEventListener('click', () => fileInput.click());
+    // 키보드(Enter·Space)로도 열 수 있게
+    dropZone.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); }
+    });
+    addMoreBtn.addEventListener('click', () => fileInput.click());
+
+    fileInput.addEventListener('change', (e) => {
+      if (e.target.files.length > 0) {
+        handleFilesAdded(Array.from(e.target.files));
+        fileInput.value = ''; // 같은 파일을 다시 고를 수 있게 비움
+      }
+    });
+
+    // 파일을 끌고 들어올 때 강조
+    ['dragenter', 'dragover'].forEach(eventName => {
+      dropZone.addEventListener(eventName, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropZone.classList.add('drag-over');
+      }, false);
+    });
+
+    ['dragleave', 'drop'].forEach(eventName => {
+      dropZone.addEventListener(eventName, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropZone.classList.remove('drag-over');
+      }, false);
+    });
+
+    // 파일을 놓았을 때
+    dropZone.addEventListener('drop', (e) => {
+      const files = Array.from(e.dataTransfer.files);
+      handleFilesAdded(files);
+    });
+
+    // 목록 비우기
+    clearAllBtn.addEventListener('click', () => {
+      if (pdfFileList.length === 0) return;
+      pdfFileList = [];
+      renderFileList();
+      showToast('파일 목록이 전체 삭제되었습니다.', 'info');
+    });
+
+    // 병합 실행
+    mergeBtn.addEventListener('click', mergePDFs);
+  }
+
+  // ==========================================
+  // 파일 추가: 페이지 수와 첫 장 미리보기 읽기
+  // ==========================================
+  async function handleFilesAdded(files) {
+    // PDF 파일만 골라내기
+    const validPdfFiles = files.filter(file => file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf'));
+
+    if (validPdfFiles.length === 0) {
+      showToast('PDF 형식(.pdf)의 파일만 추가할 수 있습니다.', 'error');
+      return;
+    }
+
+    showLoading(true, '파일 읽는 중...', 'PDF 페이지 수 및 정보를 읽어오는 중입니다.');
+    updateProgress(0);
+
+    let processedCount = 0;
+    for (const file of validPdfFiles) {
+      try {
+        // 고유 번호 만들기
+        const fileId = 'pdf_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+
+        // 파일을 브라우저 메모리로 읽기 (서버 전송 없음)
+        const arrayBuffer = await file.arrayBuffer();
+
+        // PDF.js로 페이지 수 확인
+        const pdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        const pageCount = pdfDoc.numPages;
+
+        // 첫 페이지 미리보기 이미지 (낮은 해상도)
+        let thumbnailDataUrl = null;
+        try {
+          const page = await pdfDoc.getPage(1);
+          const viewport = page.getViewport({ scale: 0.2 });
+          const canvas = document.createElement('canvas');
+          const context = canvas.getContext('2d');
+          canvas.height = viewport.height;
+          canvas.width = viewport.width;
+
+          await page.render({ canvasContext: context, viewport: viewport }).promise;
+          thumbnailDataUrl = canvas.toDataURL('image/jpeg', 0.7);
+        } catch (thumbErr) {
+          console.warn('미리보기 생성 실패:', thumbErr);
+        }
+
+        pdfFileList.push({
+          id: fileId,
+          file: file,
+          pageCount: pageCount,
+          thumbnail: thumbnailDataUrl,
+          size: formatBytes(file.size)
+        });
+
+      } catch (err) {
+        console.error('PDF 읽기 오류:', err);
+        showToast(`'${file.name}' 파일을 읽는 중 오류가 발생했습니다. (암호화된 PDF 가능성)`, 'error');
+      }
+
+      processedCount++;
+      updateProgress(Math.round((processedCount / validPdfFiles.length) * 100));
+    }
+
+    showLoading(false);
+    renderFileList();
+    showToast(`${validPdfFiles.length}개의 PDF 파일이 추가되었습니다.`, 'success');
+  }
+
+  // ==========================================
+  // 화면 그리기: 파일 목록 카드
+  // ==========================================
+  function renderFileList() {
+    pdfListContainer.innerHTML = '';
+
+    if (pdfFileList.length === 0) {
+      listSection.classList.add('hidden');
+      actionSection.classList.add('hidden');
+      return;
+    }
+
+    listSection.classList.remove('hidden');
+    actionSection.classList.remove('hidden');
+
+    let totalPages = 0;
+
+    pdfFileList.forEach((item, index) => {
+      totalPages += item.pageCount;
+
+      const card = document.createElement('div');
+      card.className = 'item';
+      card.dataset.id = item.id;
+
+      // 미리보기 이미지 (없으면 PDF 아이콘)
+      const thumbHtml = item.thumbnail
+        ? `<img src="${item.thumbnail}" class="thumb" alt="첫 페이지 미리보기">`
+        : `<div class="thumb none"><i class="fa-solid fa-file-pdf"></i></div>`;
+
+      const safeName = escapeHtml(item.file.name);
+      const isFirst = index === 0;
+      const isLast = index === pdfFileList.length - 1;
+
+      card.innerHTML = `
+        <!-- 끌기 손잡이 -->
+        <div class="drag-handle" title="끌어서 순서 변경"><i class="fa-solid fa-grip-vertical"></i></div>
+
+        <!-- 순서 번호 -->
+        <div class="order">${index + 1}</div>
+
+        <!-- 미리보기 -->
+        ${thumbHtml}
+
+        <!-- 파일 정보 -->
+        <div class="info">
+          <h4 title="${safeName}">${safeName}</h4>
+          <div class="meta">
+            <span class="pages"><i class="fa-regular fa-file"></i> ${item.pageCount} 페이지</span>
+            <span>${item.size}</span>
+          </div>
+        </div>
+
+        <!-- 위·아래 이동 버튼 -->
+        <div class="move">
+          <button class="icon-btn" onclick="moveItem(${index}, -1)" title="위로 이동" aria-label="위로 이동" ${isFirst ? 'disabled' : ''}>
+            <i class="fa-solid fa-chevron-up"></i>
+          </button>
+          <button class="icon-btn" onclick="moveItem(${index}, 1)" title="아래로 이동" aria-label="아래로 이동" ${isLast ? 'disabled' : ''}>
+            <i class="fa-solid fa-chevron-down"></i>
+          </button>
+        </div>
+
+        <!-- 삭제 버튼 -->
+        <button class="icon-btn del" onclick="removeFile('${item.id}')" title="목록에서 삭제" aria-label="목록에서 삭제">
+          <i class="fa-solid fa-trash-can"></i>
+        </button>
+      `;
+
+      pdfListContainer.appendChild(card);
+    });
+
+    // 파일 개수와 전체 페이지 수 표시
+    fileCountBadge.textContent = `${pdfFileList.length}개 파일`;
+    totalPageBadge.textContent = `총 ${totalPages}페이지`;
+  }
+
+  // ==========================================
+  // 순서 바꾸기와 삭제
+  // ==========================================
+  function moveItem(index, direction) {
+    const targetIndex = index + direction;
+    if (targetIndex < 0 || targetIndex >= pdfFileList.length) return;
+
+    // 두 항목 자리 바꾸기
+    const temp = pdfFileList[index];
+    pdfFileList[index] = pdfFileList[targetIndex];
+    pdfFileList[targetIndex] = temp;
+
+    renderFileList();
+  }
+
+  function removeFile(id) {
+    pdfFileList = pdfFileList.filter(item => item.id !== id);
+    renderFileList();
+    showToast('파일이 목록에서 삭제되었습니다.', 'info');
+  }
+
+  // ==========================================
+  // PDF 병합 (pdf-lib 사용, 모두 브라우저 안에서 처리)
+  // ==========================================
+  async function mergePDFs() {
+    if (pdfFileList.length < 1) {
+      showToast('병합할 PDF 파일을 최소 1개 이상 추가해주세요.', 'error');
+      return;
+    }
+
+    showLoading(true, 'PDF 병합 작업 진행 중...', '문서를 결합하고 새 PDF를 생성하고 있습니다.');
+    updateProgress(10);
+
+    try {
+      // 빈 PDF 문서 만들기
+      const mergedPdf = await PDFLib.PDFDocument.create();
+      const totalFiles = pdfFileList.length;
+
+      for (let i = 0; i < totalFiles; i++) {
+        const item = pdfFileList[i];
+
+        // 원본 PDF 읽기
+        const arrayBuffer = await item.file.arrayBuffer();
+        const pdfDoc = await PDFLib.PDFDocument.load(arrayBuffer);
+
+        // 모든 페이지 번호 (0부터 시작)
+        const pageIndices = pdfDoc.getPageIndices();
+
+        // 페이지를 복사해 새 문서 뒤에 붙이기
+        const copiedPages = await mergedPdf.copyPages(pdfDoc, pageIndices);
+        copiedPages.forEach(page => mergedPdf.addPage(page));
+
+        // 진행률 (10% ~ 90%)
+        const progress = Math.round(((i + 1) / totalFiles) * 80) + 10;
+        updateProgress(progress);
+      }
+
+      updateProgress(95);
+
+      // 완성된 PDF를 바이트 데이터로 저장
+      const mergedPdfBytes = await mergedPdf.save();
+
+      // 내려받기 링크 만들기
+      const blob = new Blob([mergedPdfBytes], { type: 'application/pdf' });
+      const downloadUrl = URL.createObjectURL(blob);
+      const filename = generateFormattedFilename();
+
+      // 보이지 않는 링크를 눌러 자동 다운로드
+      const a = document.createElement('a');
+      a.href = downloadUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+
+      // 메모리 정리
+      setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+
+      updateProgress(100);
+      setTimeout(() => {
+        showLoading(false);
+        showToast('PDF 병합이 완료되어 다운로드되었습니다!', 'success');
+      }, 300);
+
+    } catch (err) {
+      console.error('PDF 병합 중 오류 발생:', err);
+      showLoading(false);
+      showToast('PDF 병합 중 오류가 발생했습니다. 파일이 손상되었거나 암호가 설정되어 있는지 확인해주세요.', 'error');
+    }
+  }
+
+  // ==========================================
+  // 도우미 함수
+  // ==========================================
+
+  // 다운로드 파일명 예: 병합_20261006.pdf
+  function generateFormattedFilename() {
+    const today = new Date();
+    const year = today.getFullYear();
+    const month = String(today.getMonth() + 1).padStart(2, '0');
+    const day = String(today.getDate()).padStart(2, '0');
+    return `병합_${year}${month}${day}.pdf`;
+  }
+
+  function updateFilenamePreview() {
+    previewFilename.textContent = generateFormattedFilename();
+  }
+
+  // 파일 크기를 읽기 쉽게 (KB, MB …)
+  function formatBytes(bytes, decimals = 1) {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const dm = decimals < 0 ? 0 : decimals;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+  }
+
+  // 파일 이름에 들어간 특수문자를 안전하게 바꾸기
+  function escapeHtml(str) {
+    return str.replace(/&/g, "&amp;")
+              .replace(/</g, "&lt;")
+              .replace(/>/g, "&gt;")
+              .replace(/"/g, "&quot;")
+              .replace(/'/g, "&#039;");
+  }
+
+  // 처리 중 창 열고 닫기
+  function showLoading(show, title = '처리 중...', desc = '잠시만 기다려주세요.') {
+    document.getElementById('modalStatusTitle').textContent = title;
+    document.getElementById('modalStatusDesc').textContent = desc;
+    loadingModal.classList.toggle('hidden', !show);
+  }
+
+  // 진행 막대 갱신
+  function updateProgress(percent) {
+    progressBar.style.width = percent + '%';
+    progressPercent.textContent = percent + '%';
+  }
+
+  // 알림 메시지 띄우기 (3초 뒤 사라짐)
+  let toastTimer = null;
+  function showToast(message, type = 'info') {
+    const toast = document.getElementById('toast');
+    const toastMsg = document.getElementById('toastMsg');
+    const toastIcon = document.getElementById('toastIcon');
+
+    toastMsg.textContent = message;
+
+    if (type === 'success') {
+      toastIcon.className = 'fa-solid fa-circle-check success';
+    } else if (type === 'error') {
+      toastIcon.className = 'fa-solid fa-circle-exclamation error';
+    } else {
+      toastIcon.className = 'fa-solid fa-circle-info info';
+    }
+
+    toast.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toast.classList.remove('show'), 3000);
+  }
+</script>
+</body>
+</html>
